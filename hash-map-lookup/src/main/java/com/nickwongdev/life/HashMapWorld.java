@@ -9,7 +9,7 @@ import java.util.*;
  * - Lots of individual lookups against the Set that are misses
  * - Duplicates all the data into another Set instance for the next Tick
  * - Doesn't gracefully handle long overflow
- * - Uses a lot of collections rather than arrays to store temp data (garbage collection)
+ * - Uses a lot of collections rather than arrays to store temp data (Eden GC should be OK since in same frame?)
  * - Doesn't have a generic API for spatial query, very specific to just this use case on the 2d plane
  * - Doesn't solve the problem that every new life generated is detected 3 times (once for every parent)
  *
