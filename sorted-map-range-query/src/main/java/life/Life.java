@@ -1,4 +1,4 @@
-package com.nickwongdev.life;
+package life;
 
 /**
  * A representation of a single Life.

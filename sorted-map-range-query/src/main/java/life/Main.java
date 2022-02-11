@@ -1,4 +1,4 @@
-package com.nickwongdev.life;
+package life;
 
 import java.io.BufferedReader;
 import java.io.IOException;

@@ -1,4 +1,4 @@
-package com.nickwongdev.life;
+package life;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;

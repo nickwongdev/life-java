@@ -1,4 +1,4 @@
-package com.nickwongdev.life;
+package life;
 
 import org.junit.jupiter.api.Test;
 
