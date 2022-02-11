@@ -5,24 +5,17 @@ package life;
  */
 public class Life {
 
-    // The X and Y coordinate for the location of this Life
-    private final long x;
-    private final long y;
+    private final Pos pos;
 
     // How many ticks this Life has existed
-    private long age;
+    private long age = 0;
 
-    public Life(long x, long y) {
-        this.x = x;
-        this.y = y;
+    public Life(Pos pos) {
+        this.pos = pos;
     }
 
-    public long getX() {
-        return x;
-    }
-
-    public long getY() {
-        return y;
+    public Pos getPos() {
+        return pos;
     }
 
     public long getAge() {

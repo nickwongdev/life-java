@@ -80,22 +80,24 @@ public class World {
      * might try to insert the same new Life node for the same location. Life is created as part of the atomic insert
      * operation to avoid unnecessary object creation during processing if there is a collision.
      *
-     * @param xPos The x position for new life to be created
-     * @param yPos The y position for new life to be created
+     * @param pos the Position new Life should be created
      * @return the new Life created or null if there was already life there or life could not be created there (oob)
      */
-    public Life createLife(final long xPos, final long yPos) {
+    public Life createLife(final Pos pos) {
         final AtomicReference<Life> lifeRetVal = new AtomicReference<>();
-        worldMap.compute(xPos, (x, v) -> {
-            var yMap = v;
+        worldMap.compute(pos.xPos(), (x, yMapActual) -> {
+            var yMap = yMapActual;
             if (yMap == null) {
                 yMap = new ConcurrentSkipListMap<>();
             }
-            final var life = new Life(xPos, yPos);
-            final var oldLife = yMap.putIfAbsent(yPos, life);
-            if (oldLife == null) {
+            yMap.compute(pos.yPos(), (y, l) -> {
+                if (l != null) {
+                    throw new RuntimeException("You cannot insert Life where there is already Life");
+                }
+                final var life = new Life(pos);
                 lifeRetVal.set(life);
-            }
+                return life;
+            });
             return yMap;
         });
         return lifeRetVal.get();
@@ -107,8 +109,8 @@ public class World {
      * @param life The Life to remove from the World (usually because it is dead)
      */
     public void destroyLife(final Life life) {
-        worldMap.computeIfPresent(life.getX(), (k, v) -> {
-            v.remove(life.getY());
+        worldMap.computeIfPresent(life.getPos().xPos(), (k, v) -> {
+            v.remove(life.getPos().yPos());
             // Clean up resources to avoid memory leak of empty maps
             if (v.isEmpty()) {
                 return null;
@@ -130,7 +132,10 @@ public class World {
         assert (startX <= endX);
         assert (endY <= startY);
 
-        final List<Life> foundLife = new ArrayList<>(25);
+        final var x_size = endX - startX;
+        final var y_size = startY - endY;
+        final int num_elements = Math.toIntExact(x_size * y_size);
+        final List<Life> foundLife = new ArrayList<>(num_elements);
 
         final var xMap = worldMap.tailMap(startX, true);
 
@@ -161,7 +166,7 @@ public class World {
 
         // List of Life to kill after resolution
         final List<Life> killList = new ArrayList<>();
-        final List<Life> newLifeList = new ArrayList<>();
+        final HashMap<Pos, Life> createMap = new HashMap<>();
 
         for (NavigableMap<Long, Life> yMap : worldMap.values()) {
             for (Life life : yMap.values()) {
@@ -178,47 +183,32 @@ public class World {
 
                 // Here's what you do on every Tick
                 // Storage for spatial query
-                var x = life.getX();
-                var y = life.getY();
+                final var curLifePos = life.getPos();
+                final var neighbors = queryAroundPoint(curLifePos);
+                final var possibleLifeMap = new HashMap<Pos, Integer>();
 
-                var neighbors = queryAroundPoint(x, y);
-
-                for (Life neighbor : neighbors) {
+                for (Life neighbor : neighbors.values()) {
 
                     // Skip self
                     if (neighbor == life) {
                         continue;
                     }
 
-                    // Skip newborns
-                    if (neighbor.getAge() == 0) {
-                        continue;
-                    }
-
-                    // I decided to consider the neighbor in relation to the Life being examined
-                    // This resulted in a lot of recalculation of the position
-                    var relationalNeighborX = (int) (neighbor.getX() - x);
-                    var relationalNeighborY = (int) (neighbor.getY() - y);
-
                     // Close neighbor check, increment neighbor counter
-                    if (relationalNeighborX >= -1 && relationalNeighborX <= 1 && relationalNeighborY <= 1 && relationalNeighborY >= -1) {
+                    if (curLifePos.distance(neighbor.getPos()) == 1) {
                         closeNeighborCount++;
                     }
 
                     // Updates the possibleLifeCounters based on the position of the current Neighbor
-                    updateCounters(relationalNeighborX, relationalNeighborY, possibleLifeCounters);
+                    for (Pos pos : partnerPoints(curLifePos, neighbor.getPos(), possibleLifeMap.keySet())) {
+                        possibleLifeMap.put(pos, possibleLifeMap.getOrDefault(pos, 0) + 1);
+                    }
                 }
 
                 // See what life we created
-                for (int i = 0; i < possibleLifeCounters.length; i++) {
-                    if (possibleLifeCounters[i] == 3) {
+                for (Map.Entry<Pos, Integer> entry : possibleLifeMap.entrySet()) {
+                    if (entry.getValue() == 3) {
                         var isDuplicate = false;
-                        var absoluteCoordinates = relationalPositionToActualPosition(life, i);
-                        if (absoluteCoordinates == CANNOT_CREATE_LIFE_THERE) {
-                            continue;
-                        }
-                        var unadjustedX = absoluteCoordinates[0];
-                        var unadjustedY = absoluteCoordinates[1];
 
                         // Duplicate check to make sure we aren't trying to create life on top of existing Life
                         for (final Life partner : neighbors) {
@@ -277,30 +267,35 @@ public class World {
         }
     }
 
-    private Life[] queryAroundPoint(final long x, final long y) {
-        var startX = x - 2;
-        var startY = y + 2;
-        var endX = x + 2;
-        var endY = y - 2;
+    private Map<Pos, Life> queryAroundPoint(final Pos pos) {
+        var startX = pos.xPos() - 2;
+        var startY = pos.yPos() + 2;
+        var endX = pos.xPos() + 2;
+        var endY = pos.yPos() - 2;
 
         // Overflow Detection dynamically resizes the search box at the edges
-        if (startX > x) {
+        if (startX > pos.xPos()) {
             System.err.println("Overflow detected on startX, setting to " + Long.MIN_VALUE);
             startX = Long.MIN_VALUE;
         }
-        if (startY < y) {
+        if (startY < pos.yPos()) {
             System.err.println("Overflow detected on startY, setting to " + Long.MAX_VALUE);
             startY = Long.MAX_VALUE;
         }
-        if (endX < x) {
+        if (endX < pos.xPos()) {
             System.err.println("Overflow detected on endX, setting to " + Long.MAX_VALUE);
             endX = Long.MAX_VALUE;
         }
-        if (endY > y) {
+        if (endY > pos.yPos()) {
             System.err.println("Overflow detected on endY, setting to " + Long.MIN_VALUE);
             endY = Long.MIN_VALUE;
         }
-        return spatialQuery(startX, startY, endX, endY);
+
+        final Map<Pos, Life> map = new HashMap<>();
+        for (Life l : spatialQuery(startX, startY, endX, endY)) {
+            map.put(l.getPos(), l);
+        }
+        return map;
     }
 
     /**
@@ -321,139 +316,28 @@ public class World {
      * This method considers the relative position of a neighbor and updates the appropriate counters that could
      * spawn new Life with X. If that counter reaches exactly 3, Life will be spawned.
      *
-     * @param relativeX The relative X-coordinate value of the Neighbor in relation the current inspected Life
-     * @param relativeY The relative Y-coordinate value of the Neighbor in relation the current inspected Life
-     * @param possibleLifeCounters The array to store counters in
+     * @param curLifePos The current center position
+     * @param neighborPos The neighbor position
+     * @param duplicateSet The set of already existing points
+     * @return the List of locations where Life could be created between these two points
      */
-    private void updateCounters(final int relativeX, final int relativeY, final int[] possibleLifeCounters) {
-        if (relativeY == 2) {
-            switch (relativeX) {
-                // A
-                case -2 -> possibleLifeCounters[0]++;
-                // B
-                case -1 -> {
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[1]++;
-                }
-                // C
-                case 0 -> {
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[2]++;
-                }
-                // D
-                case 1 -> {
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[2]++;
-                }
-                // E
-                case 2 -> possibleLifeCounters[2]++;
+    public List<Pos> partnerPoints(final Pos curLifePos, final Pos neighborPos, final Set<Pos> duplicateSet) {
+        final List<Pos> newLifePosList = new ArrayList<>();
+        for (long x = neighborPos.xPos() - 1; x < neighborPos.xPos() + 1; x++) {
+            if ((curLifePos.xPos() - x) > 1) {
+                continue;
             }
-        } else if (relativeY == 1) {
-            switch (relativeX) {
-                // F
-                case -2 -> {
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[3]++;
+            for (long y = neighborPos.yPos() - 1; y < neighborPos.yPos() + 1; y++) {
+                if ((curLifePos.yPos() - y) > 1) {
+                    continue;
                 }
-                // 0
-                case -1 -> {
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[3]++;
+                if (duplicateSet.contains(new Pos(x, y))) {
+                    continue;
                 }
-                // 1
-                case 0 -> {
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[2]++;
-                    possibleLifeCounters[3]++;
-                    possibleLifeCounters[4]++;
-                }
-                // 2
-                case 1 -> {
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[4]++;
-                }
-                // G
-                case 2 -> {
-                    possibleLifeCounters[2]++;
-                    possibleLifeCounters[4]++;
-                }
-            }
-        } else if (relativeY == 0) {
-            switch (relativeX) {
-                // H
-                case -2 -> {
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[3]++;
-                    possibleLifeCounters[5]++;
-                }
-                case -1 -> { // 3
-                    possibleLifeCounters[0]++;
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[5]++;
-                    possibleLifeCounters[6]++;
-                }
-                case 1 -> { // 4
-                    possibleLifeCounters[1]++;
-                    possibleLifeCounters[2]++;
-                    possibleLifeCounters[6]++;
-                    possibleLifeCounters[7]++;
-                }
-                case 2 -> { // I
-                    possibleLifeCounters[2]++;
-                    possibleLifeCounters[4]++;
-                    possibleLifeCounters[7]++;
-                }
-            }
-        } else if (relativeY == -1) {
-            switch (relativeX) {
-                case -2 -> { // J
-                    possibleLifeCounters[3]++;
-                    possibleLifeCounters[5]++;
-                }
-                case -1 -> { // 5
-                    possibleLifeCounters[3]++;
-                    possibleLifeCounters[6]++;
-                }
-                case 0 -> { // 6
-                    possibleLifeCounters[3]++;
-                    possibleLifeCounters[4]++;
-                    possibleLifeCounters[5]++;
-                    possibleLifeCounters[7]++;
-                }
-                case 1 -> { // 7
-                    possibleLifeCounters[6]++;
-                    possibleLifeCounters[4]++;
-                }
-                case 2 -> { // K
-                    possibleLifeCounters[4]++;
-                    possibleLifeCounters[7]++;
-                }
-            }
-        } else if (relativeY == -2) {
-            switch (relativeX) {
-                // L
-                case -2 -> possibleLifeCounters[5]++;
-                // M
-                case -1 -> {
-                    possibleLifeCounters[5]++;
-                    possibleLifeCounters[6]++;
-                }
-                // N
-                case 0 -> {
-                    possibleLifeCounters[5]++;
-                    possibleLifeCounters[6]++;
-                    possibleLifeCounters[7]++;
-                }
-                // O
-                case 1 -> {
-                    possibleLifeCounters[6]++;
-                    possibleLifeCounters[7]++;
-                }
-                // P
-                case 2 -> possibleLifeCounters[7]++;
+                newLifePosList.add(new Pos(x, y));
             }
         }
+        return newLifePosList;
     }
 
     /**
